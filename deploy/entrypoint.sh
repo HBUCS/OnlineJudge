@@ -1,4 +1,5 @@
-#!/bin/sh
+#! /bin/bash
+set -x
 
 APP=/app
 DATA=/data
@@ -68,8 +69,8 @@ do
     sleep 8
 done
 
-addgroup -g 12003 spj
-adduser -u 12000 -S -G spj server
+groupadd -g 12003 spj
+adduser server --uid 12000 --system --ingroup spj
 
 chown -R server:spj $DATA $APP/dist
 find $DATA/test_case -type d -exec chmod 710 {} \;

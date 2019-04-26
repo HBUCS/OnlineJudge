@@ -1,4 +1,11 @@
+import sentry_sdk
+from sentry_sdk.integrations.django import DjangoIntegration
 from utils.shortcuts import get_env
+
+sentry_sdk.init(
+    dsn="https://11df0d22fcb1433b8f076950a718caf0@sentry.io/1452171",
+    integrations=[DjangoIntegration()]
+)
 
 DATABASES = {
     'default': {

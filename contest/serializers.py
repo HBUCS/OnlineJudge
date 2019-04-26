@@ -12,6 +12,7 @@ class CreateConetestSeriaizer(serializers.Serializer):
     rule_type = serializers.ChoiceField(choices=[ContestRuleType.ACM, ContestRuleType.OI])
     password = serializers.CharField(allow_blank=True, max_length=32)
     visible = serializers.BooleanField()
+    similarity_check = serializers.BooleanField()
     real_time_rank = serializers.BooleanField()
     allowed_ip_ranges = serializers.ListField(child=serializers.CharField(max_length=32), allow_empty=True)
 
@@ -24,6 +25,7 @@ class EditConetestSeriaizer(serializers.Serializer):
     end_time = serializers.DateTimeField()
     password = serializers.CharField(allow_blank=True, allow_null=True, max_length=32)
     visible = serializers.BooleanField()
+    similarity_check = serializers.BooleanField()
     real_time_rank = serializers.BooleanField()
     allowed_ip_ranges = serializers.ListField(child=serializers.CharField(max_length=32))
 

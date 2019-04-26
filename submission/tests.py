@@ -1,7 +1,7 @@
 from copy import deepcopy
 from unittest import mock
 
-from problem.models import Problem, ProblemTag
+from problem.models import Problem
 from utils.api.tests import APITestCase
 from .models import Submission
 
@@ -37,9 +37,7 @@ class SubmissionPrepare(APITestCase):
         tags = problem_data.pop("tags")
         problem_data["created_by"] = user
         self.problem = Problem.objects.create(**problem_data)
-        for tag in tags:
-            tag = ProblemTag.objects.create(name=tag)
-            self.problem.tags.add(tag)
+        self.problem.tags.set(tags)
         self.problem.save()
         self.submission_data = deepcopy(DEFAULT_SUBMISSION_DATA)
         self.submission_data["problem_id"] = self.problem.id

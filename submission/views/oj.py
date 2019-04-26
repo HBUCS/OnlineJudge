@@ -1,22 +1,25 @@
 import ipaddress
 
+from django.db import IntegrityError
+
 from account.decorators import login_required, check_contest_permission
-from contest.models import ContestStatus, ContestRuleType
-from judge.tasks import judge_task
+from contest.models import ContestStatus, ContestRuleType, Contest
+from judge.tasks import judge_task, grade_task
 from options.options import SysOptions
 # from judge.dispatcher import JudgeDispatcher
 from problem.models import Problem, ProblemRuleType
-from utils.api import APIView, validate_serializer
+from utils.api import APIView, validate_serializer, APIError
 from utils.cache import cache
 from utils.captcha import Captcha
 from utils.throttling import TokenBucket
-from ..models import Submission
+from ..models import Submission, TestPaperSubmission, Comment, GradeStatus
 from ..serializers import (CreateSubmissionSerializer, SubmissionModelSerializer,
-                           ShareSubmissionSerializer)
+                           ShareSubmissionSerializer, CreateTestPaperSubmissionSerializer, CommentSerializer, CreateCommentSerializer, EditCommentSerializer,
+                           TestPaperSubmissionSerializer, TestPaperSubmissionSimpleSerializer)
 from ..serializers import SubmissionSafeModelSerializer, SubmissionListSerializer
 
 
-class SubmissionAPI(APIView):
+class GeneralSubmissionAPI(APIView):
     def throttling(self, request):
         # 使用 open_api 的请求暂不做限制
         auth_method = getattr(request, "auth_method", "")
@@ -26,7 +29,7 @@ class SubmissionAPI(APIView):
                                   redis_conn=cache, **SysOptions.throttling["user"])
         can_consume, wait = user_bucket.consume()
         if not can_consume:
-            return "Please wait %d seconds" % (int(wait))
+            raise APIError("Please wait %d seconds" % (int(wait)))
 
         # ip_bucket = TokenBucket(key=request.session["ip"],
         #                         redis_conn=cache, **SysOptions.throttling["ip"])
@@ -38,22 +41,152 @@ class SubmissionAPI(APIView):
     def check_contest_permission(self, request):
         contest = self.contest
         if contest.status == ContestStatus.CONTEST_ENDED:
-            return self.error("The contest have ended")
+            raise APIError("The contest have ended")
         if not request.user.is_contest_admin(contest):
             user_ip = ipaddress.ip_address(request.session.get("ip"))
             if contest.allowed_ip_ranges:
                 if not any(user_ip in ipaddress.ip_network(cidr, strict=False) for cidr in contest.allowed_ip_ranges):
-                    return self.error("Your IP is not allowed in this contest")
+                    raise APIError("Your IP is not allowed in this contest")
 
+
+class TestPaperSubmissionAPI(GeneralSubmissionAPI):
+    @login_required
+    def get(self, request):
+        user = request.user
+        submission_id = request.GET.get("id")
+        if submission_id:
+            try:
+                submission = TestPaperSubmission.objects.get(id=submission_id)
+                if not submission.check_user_permission(user):
+                    return self.error("No permission for this submission")
+                return self.success(TestPaperSubmissionSerializer(submission).data)
+            except TestPaperSubmission.DoesNotExist:
+                return self.success({"status": GradeStatus.NO_SUBMITTED, "content": {}})
+
+        contest_id = request.GET.get("contest_id")
+        if not contest_id:
+            return self.error("Parameter error, contest_id is required")
+        try:
+            contest = Contest.objects.get(id=contest_id)
+            submissions = TestPaperSubmission.objects.filter(contest=contest)
+            if request.GET.get("myself"):
+                try:
+                    submission = submissions.get(user_id=user.id)
+                except TestPaperSubmission.DoesNotExist:
+                    return self.success({"status": GradeStatus.NO_SUBMITTED, "content": {}})
+                return self.success(TestPaperSubmissionSerializer(submission).data)
+            if not user.is_contest_admin(contest) and contest.status != ContestStatus.CONTEST_ENDED:
+                submissions = submissions.filter(user_id=user.id)
+            return self.success(self.paginate_data(request, submissions, TestPaperSubmissionSimpleSerializer))
+        except Contest.DoesNotExist:
+            return self.error("Contest doesn't exist")
+
+    @login_required
+    @validate_serializer(CreateTestPaperSubmissionSerializer)
+    def post(self, request):
+        data = request.data
+        self.check_contest_permission(request)
+
+        if data.get("captcha"):
+            if not Captcha(request).check(data["captcha"]):
+                return self.error("Invalid captcha")
+        self.throttling(request)
+
+        try:
+            submission = TestPaperSubmission.objects.create(contest_id=data["contest_id"],
+                                                            user_id=request.user.id,
+                                                            username=request.user.username,
+                                                            content=data["content"],
+                                                            ip=request.session["ip"])
+            grade_task.send(submission.id)
+        except IntegrityError:
+            submission = TestPaperSubmission.objects.get(contest_id=data["contest_id"], user_id=request.user.id)
+        return self.success(TestPaperSubmissionSerializer(submission).data)
+
+    @login_required
+    def put(self, request):
+        user = request.user
+        submission_id = request.GET.get("id")
+        if not submission_id:
+            return self.error("Parameter error, submission_id is required")
+        try:
+            submission = TestPaperSubmission.objects.get(id=submission_id)
+            if not user.is_contest_admin(submission.contest):
+                return self.error("No permission for this submission")
+            grade_task.send(submission.id)
+            return self.success()
+        except TestPaperSubmission.DoesNotExist:
+            return self.error("Submission doesn't exist")
+
+
+class CommentAPI(APIView):
+    def get(self, request):
+        submission_id = request.GET.get("submission_id")
+        if not submission_id:
+            return self.error("Parameter error, submission_id is required")
+
+        try:
+            submission = Submission.objects.get(id=submission_id)
+            if not submission.check_user_permission(request.user):
+                return self.error("No permission for this submission")
+        except Submission.DoesNotExist:
+            return self.error("Submission does not exist")
+
+        comments = Comment.objects.filter(submission_id=submission_id)
+        return self.success(CommentSerializer(comments, many=True).data)
+
+    @login_required
+    @validate_serializer(CreateCommentSerializer)
+    def post(self, request):
+        data = request.data
+        try:
+            submission = Submission.objects.get(id=data["submission_id"])
+            if not submission.check_user_permission(request.user):
+                return self.error("No permission for this submission")
+        except Submission.DoesNotExist:
+            return self.error("Submission does not exist")
+        comment = Comment.objects.create(user_id=request.user.id,
+                                         username=request.user.username,
+                                         submission_id=data["submission_id"],
+                                         message=data["message"],
+                                         line=data["line"])
+        return self.success(CommentSerializer(comment).data)
+
+    @login_required
+    @validate_serializer(EditCommentSerializer)
+    def put(self, request):
+        data = request.data
+        try:
+            comment = Comment.objects.get(id=data["id"])
+            if not comment.submission.check_user_permission(request.user):
+                return self.error("No permission for this submission")
+        except Comment.DoesNotExist:
+            return self.error("Comment Does not exist")
+        comment.message = data["message"]
+        comment.save()
+        return self.success(CommentSerializer(comment).data)
+
+    @login_required
+    def delete(self, request):
+        comment_id = request.GET.get("id")
+        try:
+            comment = Comment.objects.get(id=comment_id)
+            if not comment.submission.check_user_permission(request.user):
+                return self.error("No permission for this submission")
+            comment.delete()
+        except Comment.DoesNotExist:
+            return self.error("Comment does not exist")
+        return self.success()
+
+
+class SubmissionAPI(GeneralSubmissionAPI):
     @validate_serializer(CreateSubmissionSerializer)
     @login_required
     def post(self, request):
         data = request.data
         hide_id = False
         if data.get("contest_id"):
-            error = self.check_contest_permission(request)
-            if error:
-                return error
+            self.check_contest_permission(request)
             contest = self.contest
             if not contest.problem_details_permission(request.user):
                 hide_id = True
@@ -61,9 +194,8 @@ class SubmissionAPI(APIView):
         if data.get("captcha"):
             if not Captcha(request).check(data["captcha"]):
                 return self.error("Invalid captcha")
-        error = self.throttling(request)
-        if error:
-            return self.error(error)
+
+        self.throttling(request)
 
         try:
             problem = Problem.objects.get(id=data["problem_id"], contest_id=data.get("contest_id"), visible=True)

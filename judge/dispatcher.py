@@ -1,6 +1,9 @@
 import hashlib
 import json
 import logging
+import re
+
+import ssdeep
 from urllib.parse import urljoin
 
 import requests
@@ -192,6 +195,7 @@ class JudgeDispatcher(DispatcherBase):
             with transaction.atomic():
                 self.update_contest_problem_status()
                 self.update_contest_rank()
+            self.compute_code_similarity()
         else:
             if self.last_result:
                 self.update_problem_status_rejudge()
@@ -237,6 +241,34 @@ class JudgeDispatcher(DispatcherBase):
                         profile.accepted_number += 1
                 profile.oi_problems_status["problems"] = oi_problems_status
                 profile.save(update_fields=["accepted_number", "oi_problems_status"])
+
+    def _get_code_hash(self, submission):
+        key = f"{CacheKey.code_hash}:{submission.id}"
+        result = cache.get(key)
+        if not result:
+            pattern = re.compile("[^A-Za-z0-9_]")
+            code = pattern.sub("", submission.code)
+            result = ssdeep.hash(code)
+            cache.set(key, result)
+        return result
+
+    def compute_code_similarity(self):
+        cur = self.submission
+        valid_status = (JudgeStatus.ACCEPTED, JudgeStatus.PARTIALLY_ACCEPTED)
+        if cur.contest.similarity_check and cur.result in valid_status:
+            history = Submission.objects.filter(result__in=valid_status,
+                                                create_time__lt=cur.create_time,
+                                                contest=cur.contest,
+                                                language=cur.language,
+                                                problem=cur.problem).exclude(user_id=cur.user_id)
+            for item in history:
+                cur_hash, other_hash = self._get_code_hash(cur), self._get_code_hash(item)
+                similarity = ssdeep.compare(cur_hash, other_hash)
+                with transaction.atomic():
+                    for obj in (cur, item):
+                        if obj.statistic_info.get("similarity", 0) < similarity:
+                            obj.statistic_info["similarity"] = similarity
+                            obj.save(update_fields=("statistic_info",))
 
     def update_problem_status(self):
         result = str(self.submission.result)

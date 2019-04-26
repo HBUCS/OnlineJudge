@@ -119,10 +119,6 @@ class ResetPasswordSerializer(serializers.Serializer):
     captcha = serializers.CharField()
 
 
-class SSOSerializer(serializers.Serializer):
-    token = serializers.CharField()
-
-
 class TwoFactorAuthCodeSerializer(serializers.Serializer):
     code = serializers.IntegerField()
 

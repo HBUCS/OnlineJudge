@@ -34,15 +34,16 @@ class ContestAnnouncementListAPI(APIView):
 
 class ContestAPI(APIView):
     def get(self, request):
-        id = request.GET.get("id")
-        if not id or not check_is_id(id):
+        _id = request.GET.get("id")
+        if not _id or not check_is_id(_id):
             return self.error("Invalid parameter, id is required")
         try:
-            contest = Contest.objects.get(id=id, visible=True)
+            contest = Contest.objects.get(id=_id, visible=True)
         except Contest.DoesNotExist:
             return self.error("Contest does not exist")
         data = ContestSerializer(contest).data
         data["now"] = datetime2str(now())
+        data["test_paper_visible"] = bool(contest.questions.count() > 0)
         return self.success(data)
 
 

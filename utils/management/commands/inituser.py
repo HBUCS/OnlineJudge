@@ -8,6 +8,7 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument("--username", type=str)
         parser.add_argument("--password", type=str)
+        parser.add_argument("--email", type=str)
         parser.add_argument("--action", type=str)
 
     def handle(self, *args, **options):
@@ -26,6 +27,8 @@ class Command(BaseCommand):
 
             user = User.objects.create(username=username, admin_type=AdminType.SUPER_ADMIN,
                                        problem_permission=ProblemPermission.ALL)
+            if options["email"]:
+                user.email = options["email"]
             user.set_password(password)
             user.save()
             UserProfile.objects.create(user=user)

@@ -6,10 +6,11 @@ from datetime import timedelta
 from zipfile import ZipFile
 
 from django.conf import settings
+from taggit.models import Tag
 
 from utils.api.tests import APITestCase
 
-from .models import ProblemTag, ProblemIOMode
+from .models import ProblemIOMode
 from .models import Problem, ProblemRuleType
 from contest.models import Contest
 from contest.tests import DEFAULT_CONTEST_DATA
@@ -56,20 +57,15 @@ class ProblemCreateTestBase(APITestCase):
         data["languages"] = list(data["languages"])
 
         problem = Problem.objects.create(**data)
+        problem.tags.set(*tags)
 
-        for item in tags:
-            try:
-                tag = ProblemTag.objects.get(name=item)
-            except ProblemTag.DoesNotExist:
-                tag = ProblemTag.objects.create(name=item)
-            problem.tags.add(tag)
         return problem
 
 
 class ProblemTagListAPITest(APITestCase):
     def test_get_tag_list(self):
-        ProblemTag.objects.create(name="name1")
-        ProblemTag.objects.create(name="name2")
+        Tag.objects.create(name="name1")
+        Tag.objects.create(name="name2")
         resp = self.client.get(self.reverse("problem_tag_list_api"))
         self.assertSuccess(resp)
 

@@ -1,15 +1,17 @@
 import random
-from django.db.models import Q, Count
+from django.db.models import Q
+from taggit.models import Tag
+
 from utils.api import APIView
 from account.decorators import check_contest_permission
-from ..models import ProblemTag, Problem, ProblemRuleType
-from ..serializers import ProblemSerializer, TagSerializer, ProblemSafeSerializer
+from ..models import Problem, ProblemRuleType, ContestQuestion
+from ..serializers import ProblemSerializer, TagSerializer, ProblemSafeSerializer, ContestQuestionSerializer
 from contest.models import ContestRuleType
 
 
 class ProblemTagAPI(APIView):
     def get(self, request):
-        tags = ProblemTag.objects.annotate(problem_count=Count("problem")).filter(problem_count__gt=0)
+        tags = Tag.objects.all()
         return self.success(TagSerializer(tags, many=True).data)
 
 
@@ -114,3 +116,10 @@ class ContestProblemAPI(APIView):
         else:
             data = ProblemSafeSerializer(contest_problems, many=True).data
         return self.success(data)
+
+
+class ContestQuestionAPI(APIView):
+    @check_contest_permission(check_type="problems")
+    def get(self, request):
+        questions = ContestQuestion.objects.filter(contest=self.contest)
+        return self.success(ContestQuestionSerializer(questions, many=True).data)

@@ -1,0 +1,44 @@
+{% extends "oauth2_provider/base.html" %}
+
+{% load i18n %}
+{% block content %}
+    <div class="jumbotron">
+        {% if not error %}
+            <form id="authorizationForm" method="post">
+                <h3>
+                  <span class="glyphicon glyphicon-question-sign" aria-hidden="true"></span> {% trans "Authorize" %} {{ application.name }}
+                </h3>
+                {% csrf_token %}
+
+                {% for field in form %}
+                    {% if field.is_hidden %}
+                        {{ field }}
+                    {% endif %}
+                {% endfor %}
+
+                <p>{% trans "Application requires following permissions" %}</p>
+                <ul class="list-group">
+                    {% for scope in scopes_descriptions %}
+                        <li class="list-group-item">{{ scope }}</li>
+                    {% endfor %}
+                </ul>
+
+                {{ form.errors }}
+                {{ form.non_field_errors }}
+
+                <div class="control-group">
+                    <div class="controls">
+                        <input type="submit" class="btn btn-large" value="Cancel"/>
+                        <input type="submit" class="btn btn-large btn-primary" name="allow" value="Authorize"/>
+                    </div>
+                </div>
+            </form>
+
+        {% else %}
+            <h2>
+              <span class="glyphicon glyphicon-remove-circle" aria-hidden="true"></span> Error: {{ error.error }}
+            </h2>
+            <p>{{ error.description }}</p>
+        {% endif %}
+    </div>
+{% endblock %}

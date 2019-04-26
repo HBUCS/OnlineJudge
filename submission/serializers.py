@@ -1,4 +1,4 @@
-from .models import Submission
+from .models import Submission, Comment, TestPaperSubmission
 from utils.api import serializers
 from utils.serializers import LanguageNameChoiceField
 
@@ -9,6 +9,45 @@ class CreateSubmissionSerializer(serializers.Serializer):
     code = serializers.CharField(max_length=1024 * 1024)
     contest_id = serializers.IntegerField(required=False)
     captcha = serializers.CharField(required=False)
+
+
+class TestPaperSubmissionSimpleSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = TestPaperSubmission
+        fields = ("id", "create_time", "status", "score", "username")
+
+
+class TestPaperSubmissionSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = TestPaperSubmission
+        fields = ("id", "create_time", "status", "score", "user_id",
+                  "content")
+
+
+class CreateTestPaperSubmissionSerializer(serializers.Serializer):
+    contest_id = serializers.IntegerField()
+    content = serializers.DictField()
+    captcha = serializers.CharField(required=False)
+
+
+class CreateCommentSerializer(serializers.Serializer):
+    submission_id = serializers.CharField()
+    line = serializers.IntegerField()
+    message = serializers.CharField()
+
+
+class EditCommentSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    message = serializers.CharField()
+
+
+class CommentSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Comment
+        exclude = ("submission", "user_id")
 
 
 class ShareSubmissionSerializer(serializers.Serializer):

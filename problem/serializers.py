@@ -1,13 +1,14 @@
 import re
 
 from django import forms
+from taggit.models import Tag
 
 from options.options import SysOptions
 from utils.api import UsernameSerializer, serializers
 from utils.constants import Difficulty
 from utils.serializers import LanguageNameMultiChoiceField, SPJLanguageNameChoiceField, LanguageNameChoiceField
 
-from .models import Problem, ProblemRuleType, ProblemTag, ProblemIOMode
+from .models import Problem, ProblemRuleType, ProblemIOMode, Question, ContestQuestion
 from .utils import parse_problem_template
 
 
@@ -72,6 +73,32 @@ class CreateOrEditProblemSerializer(serializers.Serializer):
     share_submission = serializers.BooleanField()
 
 
+class CreateQuestionSerializer(serializers.Serializer):
+    title = serializers.CharField(max_length=1024)
+    description = serializers.CharField()
+    difficulty = serializers.ChoiceField(choices=Difficulty.choices())
+    tags = serializers.ListField(child=serializers.CharField(max_length=32), allow_empty=False)
+    source = serializers.CharField(max_length=256, allow_blank=True, allow_null=True)
+
+    schema = serializers.JSONField()
+    script = serializers.CharField()
+
+    score = serializers.IntegerField()
+    content = serializers.DictField()
+
+
+class EditQuestionSerializer(CreateQuestionSerializer):
+    id = serializers.IntegerField()
+
+
+class ExtractQuestionSerializer(serializers.Serializer):
+    contest_id = serializers.IntegerField()
+    sources = serializers.ListField(child=serializers.CharField())
+    tags = serializers.ListField(child=serializers.CharField())
+    difficulty = serializers.ListField(child=serializers.ChoiceField(choices=Difficulty.choices()))
+    number = serializers.IntegerField(min_value=1)
+
+
 class CreateProblemSerializer(CreateOrEditProblemSerializer):
     pass
 
@@ -91,7 +118,7 @@ class EditContestProblemSerializer(CreateOrEditProblemSerializer):
 
 class TagSerializer(serializers.ModelSerializer):
     class Meta:
-        model = ProblemTag
+        model = Tag
         fields = "__all__"
 
 
@@ -115,6 +142,34 @@ class ProblemAdminSerializer(BaseProblemSerializer):
     class Meta:
         model = Problem
         fields = "__all__"
+
+
+class QuestionAdminSerializer(serializers.ModelSerializer):
+    tags = serializers.SlugRelatedField(many=True, slug_field="name", read_only=True)
+    created_by = UsernameSerializer()
+
+    class Meta:
+        model = Question
+        fields = "__all__"
+
+
+class ContestQuestionSimpleSerializer(serializers.ModelSerializer):
+    title = serializers.CharField(source="question.title")
+    created_by = UsernameSerializer(source="question.created_by")
+    create_time = serializers.DateTimeField(source="question.create_time")
+
+    class Meta:
+        model = ContestQuestion
+        fields = ("id", "title", "created_by", "create_time")
+
+
+class ContestQuestionSerializer(serializers.ModelSerializer):
+    description = serializers.CharField(source="question.description")
+    schema = serializers.JSONField(source="question.schema")
+
+    class Meta:
+        model = ContestQuestion
+        fields = ("id", "description", "schema")
 
 
 class ProblemSerializer(BaseProblemSerializer):
@@ -201,6 +256,11 @@ class AddContestProblemSerializer(serializers.Serializer):
     contest_id = serializers.IntegerField()
     problem_id = serializers.IntegerField()
     display_id = serializers.CharField()
+
+
+class AddContestQuestionSerializer(serializers.Serializer):
+    contest_id = serializers.IntegerField()
+    question_id = serializers.IntegerField()
 
 
 class ExportProblemRequestSerialzier(serializers.Serializer):

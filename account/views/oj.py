@@ -8,13 +8,13 @@ from django.contrib import auth
 from django.template.loader import render_to_string
 from django.utils.decorators import method_decorator
 from django.utils.timezone import now
-from django.views.decorators.csrf import ensure_csrf_cookie, csrf_exempt
+from django.views.decorators.csrf import ensure_csrf_cookie
 from otpauth import OtpAuth
 
 from problem.models import Problem
 from utils.constants import ContestRuleType
 from options.options import SysOptions
-from utils.api import APIView, validate_serializer, CSRFExemptAPIView
+from utils.api import APIView, validate_serializer
 from utils.captcha import Captcha
 from utils.shortcuts import rand_str, img2base64, datetime2str
 from ..decorators import login_required
@@ -22,7 +22,7 @@ from ..models import User, UserProfile, AdminType
 from ..serializers import (ApplyResetPasswordSerializer, ResetPasswordSerializer,
                            UserChangePasswordSerializer, UserLoginSerializer,
                            UserRegisterSerializer, UsernameOrEmailCheckSerializer,
-                           RankInfoSerializer, UserChangeEmailSerializer, SSOSerializer)
+                           RankInfoSerializer, UserChangeEmailSerializer)
 from ..serializers import (TwoFactorAuthCodeSerializer, UserProfileSerializer,
                            EditUserProfileSerializer, ImageUploadForm)
 from ..tasks import send_email_async
@@ -418,19 +418,10 @@ class OpenAPIAppkeyAPI(APIView):
         return self.success({"appkey": api_appkey})
 
 
-class SSOAPI(CSRFExemptAPIView):
+class UserInfoAPI(APIView):
     @login_required
     def get(self, request):
-        token = rand_str()
-        request.user.auth_token = token
-        request.user.save()
-        return self.success({"token": token})
-
-    @method_decorator(csrf_exempt)
-    @validate_serializer(SSOSerializer)
-    def post(self, request):
-        try:
-            user = User.objects.get(auth_token=request.data["token"])
-        except User.DoesNotExist:
-            return self.error("User does not exist")
-        return self.success({"username": user.username, "avatar": user.userprofile.avatar, "admin_type": user.admin_type})
+        user = request.user
+        return self.success({"email": user.email or "null@oj.hbu.edu.cn",
+                             "username": user.username,
+                             "admin_type": user.admin_type})

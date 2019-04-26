@@ -25,9 +25,15 @@ class CacheKey:
     waiting_queue = "waiting_queue"
     contest_rank_cache = "contest_rank_cache"
     website_config = "website_config"
+    code_hash = "code_hash"
 
 
 class Difficulty(Choices):
     LOW = "Low"
     MID = "Mid"
     HIGH = "High"
+
+
+class QuestionType(Choices):
+    CODING = "Coding"
+    FORM = "Form"

@@ -57,3 +57,47 @@ class Submission(models.Model):
 
     def __str__(self):
         return self.id
+
+
+class Comment(models.Model):
+    create_time = models.DateTimeField(auto_now_add=True)
+    message = models.TextField()
+    line = models.IntegerField()
+    user_id = models.IntegerField(db_index=True)
+    username = models.TextField()
+
+    submission = models.ForeignKey(Submission, on_delete=models.CASCADE)
+
+    class Meta:
+        db_table = "comment"
+        ordering = ("create_time",)
+
+
+class GradeStatus:
+    NO_SUBMITTED = 0
+    SUBMITTED = 1
+    GRADING = 2
+    GRADED = 3
+    ERROR = -1
+
+
+class TestPaperSubmission(models.Model):
+    create_time = models.DateTimeField(auto_now_add=True)
+    status = models.IntegerField(default=GradeStatus.SUBMITTED)
+    score = models.IntegerField(default=0)
+    content = JSONField(default=dict)
+    contest = models.ForeignKey(Contest, on_delete=models.CASCADE)
+    user_id = models.IntegerField(db_index=True)
+    username = models.TextField()
+    ip = models.TextField(null=True)
+
+    def check_user_permission(self, user):
+        return self.user_id == user.id or \
+               user.is_super_admin() or \
+               user.can_mgmt_all_problem() or \
+               self.content.created_by_id == user.id
+
+    class Meta:
+        db_table = "test_paper_submission"
+        ordering = ("-score", "-create_time")
+        unique_together = ("content", "user_id")

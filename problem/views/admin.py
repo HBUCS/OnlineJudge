@@ -6,6 +6,7 @@ import tempfile
 import zipfile
 from wsgiref.util import FileWrapper
 
+import lupa
 from django.conf import settings
 from django.db import transaction
 from django.db.models import Q
@@ -21,13 +22,14 @@ from utils.api import APIView, CSRFExemptAPIView, validate_serializer, APIError
 from utils.constants import Difficulty
 from utils.shortcuts import rand_str, natural_sort_key
 from utils.tasks import delete_files
-from ..models import Problem, ProblemRuleType, ProblemTag
+from ..models import Problem, ProblemRuleType, Question, ContestQuestion
 from ..serializers import (CreateContestProblemSerializer, CompileSPJSerializer,
                            CreateProblemSerializer, EditProblemSerializer, EditContestProblemSerializer,
                            ProblemAdminSerializer, TestCaseUploadForm, ContestProblemMakePublicSerializer,
                            AddContestProblemSerializer, ExportProblemSerializer,
                            ExportProblemRequestSerialzier, UploadProblemForm, ImportProblemSerializer,
-                           FPSProblemSerializer)
+                           FPSProblemSerializer, QuestionAdminSerializer, CreateQuestionSerializer, EditQuestionSerializer,
+                           ExtractQuestionSerializer, AddContestQuestionSerializer, ContestQuestionSimpleSerializer)
 from ..utils import TEMPLATE_BASE, build_problem_template
 
 
@@ -196,6 +198,88 @@ class ProblemBase(APIView):
         data["languages"] = list(data["languages"])
 
 
+class QuestionAPI(APIView):
+    def _test_grade_script(self, request):
+        data = request.data
+        lua = lupa.LuaRuntime(unpack_returned_tuples=True)
+
+        try:
+            grade_func = lua.eval(data["script"])
+            content = data.pop("content")
+            if data["score"] != grade_func(content):
+                raise APIError("Unable to verify the correctness of the scoring script")
+        except lupa.LuaError as e:
+            raise APIError(str(e))
+
+    @problem_permission_required
+    def get(self, request):
+        question_id = request.GET.get("id")
+        user = request.user
+        if question_id:
+            try:
+                question = Question.objects.get(id=question_id)
+                ensure_created_by(question, request.user)
+                return self.success(QuestionAdminSerializer(question).data)
+            except Question.DoesNotExist:
+                return self.error("Question does not exist")
+
+        questions = Question.objects.all()
+        keyword = request.GET.get("keyword", "").strip()
+        if keyword:
+            questions = questions.filter(description__icontains=keyword)
+        if not user.can_mgmt_all_problem():
+            questions = questions.filter(created_by=user)
+
+        return self.success(self.paginate_data(request, questions, QuestionAdminSerializer))
+
+    @problem_permission_required
+    @validate_serializer(CreateQuestionSerializer)
+    def post(self, request):
+        self._test_grade_script(request)
+        data = request.data
+
+        tags = data.pop("tags")
+        data["created_by"] = request.user
+        question = Question.objects.create(**data)
+        question.tags.set(*tags)
+
+        return self.success(QuestionAdminSerializer(question).data)
+
+    @problem_permission_required
+    @validate_serializer(EditQuestionSerializer)
+    def put(self, request):
+        self._test_grade_script(request)
+        data = request.data
+        question_id = data.pop("id")
+
+        try:
+            question = Question.objects.get(id=question_id)
+            ensure_created_by(question, request.user)
+        except Question.DoesNotExist:
+            return self.error("Question does not exist")
+
+        tags = data.pop("tags")
+        for k, v in data.items():
+            setattr(question, k, v)
+        question.save()
+        question.tags.set(*tags)
+
+        return self.success()
+
+    @problem_permission_required
+    def delete(self, request):
+        question_id = request.GET.get("id")
+        if not question_id:
+            return self.error("Invalid parameter, id is required")
+        try:
+            question = Question.objects.get(id=question_id)
+        except Question.DoesNotExist:
+            return self.error("Problem does not exists")
+        ensure_created_by(question, request.user)
+        question.delete()
+        return self.success()
+
+
 class ProblemAPI(ProblemBase):
     @problem_permission_required
     @validate_serializer(CreateProblemSerializer)
@@ -215,13 +299,8 @@ class ProblemAPI(ProblemBase):
         tags = data.pop("tags")
         data["created_by"] = request.user
         problem = Problem.objects.create(**data)
+        problem.tags.set(*tags)
 
-        for item in tags:
-            try:
-                tag = ProblemTag.objects.get(name=item)
-            except ProblemTag.DoesNotExist:
-                tag = ProblemTag.objects.create(name=item)
-            problem.tags.add(tag)
         return self.success(ProblemAdminSerializer(problem).data)
 
     @problem_permission_required
@@ -279,14 +358,7 @@ class ProblemAPI(ProblemBase):
         for k, v in data.items():
             setattr(problem, k, v)
         problem.save()
-
-        problem.tags.remove(*problem.tags.all())
-        for tag in tags:
-            try:
-                tag = ProblemTag.objects.get(name=tag)
-            except ProblemTag.DoesNotExist:
-                tag = ProblemTag.objects.create(name=tag)
-            problem.tags.add(tag)
+        problem.tags.set(*tags)
 
         return self.success()
 
@@ -336,13 +408,8 @@ class ContestProblemAPI(ProblemBase):
         tags = data.pop("tags")
         data["created_by"] = request.user
         problem = Problem.objects.create(**data)
+        problem.tags.set(*tags)
 
-        for item in tags:
-            try:
-                tag = ProblemTag.objects.get(name=item)
-            except ProblemTag.DoesNotExist:
-                tag = ProblemTag.objects.create(name=item)
-            problem.tags.add(tag)
         return self.success(ProblemAdminSerializer(problem).data)
 
     def get(self, request):
@@ -409,14 +476,8 @@ class ContestProblemAPI(ProblemBase):
         for k, v in data.items():
             setattr(problem, k, v)
         problem.save()
+        problem.tags.set(*tags)
 
-        problem.tags.remove(*problem.tags.all())
-        for tag in tags:
-            try:
-                tag = ProblemTag.objects.get(name=tag)
-            except ProblemTag.DoesNotExist:
-                tag = ProblemTag.objects.create(name=tag)
-            problem.tags.add(tag)
         return self.success()
 
     def delete(self, request):
@@ -455,7 +516,6 @@ class MakeContestProblemPublicAPIView(APIView):
             return self.error("Already be a public problem")
         problem.is_public = True
         problem.save()
-        # https://docs.djangoproject.com/en/1.11/topics/db/queries/#copying-model-instances
         tags = problem.tags.all()
         problem.pk = None
         problem.contest = None
@@ -483,7 +543,7 @@ class AddContestProblemAPI(APIView):
         if Problem.objects.filter(contest=contest, _id=data["display_id"]).exists():
             return self.error("Duplicate display id in this contest")
 
-        tags = problem.tags.all()
+        tags = problem.tags.names()
         problem.pk = None
         problem.contest = contest
         problem.is_public = True
@@ -492,8 +552,92 @@ class AddContestProblemAPI(APIView):
         problem.submission_number = problem.accepted_number = 0
         problem.statistic_info = {}
         problem.save()
-        problem.tags.set(tags)
+        problem.tags.set(*tags)
         return self.success()
+
+
+class ContestQuestionAPI(APIView):
+    def get(self, request):
+        contest_id = request.GET.get("contest_id")
+        user = request.user
+
+        try:
+            contest = Contest.objects.get(id=contest_id)
+            ensure_created_by(contest, user)
+        except Contest.DoesNotExist:
+            return self.error("Contest does not exist")
+
+        questions = contest.contestquestion_set.all()
+
+        keyword = request.GET.get("keyword", "").strip()
+        if keyword:
+            questions = questions.filter(question__description__icontains=keyword)
+        if not user.can_mgmt_all_problem():
+            questions = questions.filter(question__created_by=user)
+
+        return self.success(self.paginate_data(request, questions, ContestQuestionSimpleSerializer))
+
+    @validate_serializer(AddContestQuestionSerializer)
+    def post(self, request):
+        data = request.data
+        user = request.user
+
+        try:
+            contest = Contest.objects.get(id=data["contest_id"])
+            ensure_created_by(contest, user)
+            question = Question.objects.get(id=data["question_id"])
+        except (Contest.DoesNotExist, Question.DoesNotExist):
+            return self.error("Contest or Question does not exist")
+
+        if contest.questions.filter(id=question.id).exists():
+            return self.error("The Question already exists")
+
+        if contest.status == ContestStatus.CONTEST_ENDED:
+            return self.error("Contest has ended")
+
+        ContestQuestion.objects.create(contest=contest, question=question)
+
+        return self.success()
+
+    def delete(self, request):
+        _id = request.GET.get("id")
+        if not _id:
+            return self.error("Invalid parameter, id is required")
+        try:
+            question = ContestQuestion.objects.get(id=_id)
+        except ContestQuestion.DoesNotExist:
+            return self.error("Contest Question does not exist")
+        ensure_created_by(question.contest, request.user)
+        question.delete()
+        return self.success()
+
+
+class ExtractQuestionAPI(APIView):
+    @validate_serializer(ExtractQuestionSerializer)
+    def post(self, request):
+        data = request.data
+        user = request.user
+
+        try:
+            contest = Contest.objects.get(id=data["contest_id"])
+            ensure_created_by(contest, user)
+        except Contest.DoesNotExist:
+            return self.error("Contest does not exist")
+
+        questions = Question.objects.difference(contest.questions.all())
+        if data["tags"]:
+            questions = questions.filter(tags__name__in=data["tags"]).distinct()
+        if data["sources"]:
+            questions = questions.filter(source__in=data["sources"])
+        if data["difficulty"]:
+            questions = questions.filter(difficulty__in=data["difficulty"])
+
+        number = 0
+        for question in questions[:data["number"]]:
+            ContestQuestion.objects.create(contest=contest, question=question)
+            number += 1
+
+        return self.success({"number": number})
 
 
 class ExportProblemAPI(APIView):
@@ -619,9 +763,7 @@ class ImportProblemAPI(CSRFExemptAPIView, TestCaseZipProcessor):
                                                              if rule_type == ProblemRuleType.OI else 0,
                                                              test_case_id=test_case_id
                                                              )
-                        for tag_name in problem_info["tags"]:
-                            tag_obj, _ = ProblemTag.objects.get_or_create(name=tag_name)
-                            problem_obj.tags.add(tag_obj)
+                        problem_obj.tags.set(*problem_info["tags"])
         return self.success({"import_count": count})
 
 

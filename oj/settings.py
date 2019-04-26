@@ -10,7 +10,6 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/1.8/ref/settings/
 """
 import os
-import raven
 from copy import deepcopy
 from utils.shortcuts import get_env
 
@@ -35,10 +34,9 @@ VENDOR_APPS = [
     'rest_framework',
     'django_dramatiq',
     'django_dbconn_retry',
+    'taggit',
+    'oauth2_provider',
 ]
-
-if production_env:
-    VENDOR_APPS.append('raven.contrib.django.raven_compat')
 
 
 LOCAL_APPS = [
@@ -55,12 +53,18 @@ LOCAL_APPS = [
 
 INSTALLED_APPS = VENDOR_APPS + LOCAL_APPS
 
+AUTHENTICATION_BACKENDS = (
+    'oauth2_provider.backends.OAuth2Backend',
+    'django.contrib.auth.backends.ModelBackend',
+)
+
 MIDDLEWARE = (
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'account.middleware.APITokenAuthMiddleware',
+    'oauth2_provider.middleware.OAuth2TokenMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'django.middleware.security.SecurityMiddleware',
@@ -73,7 +77,7 @@ ROOT_URLCONF = 'oj.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [os.path.join(BASE_DIR, 'templates')],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -122,7 +126,7 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/1.8/howto/static-files/
 
 STATIC_URL = '/public/'
-
+LOGIN_URL = '/'
 AUTH_USER_MODEL = 'account.User'
 
 TEST_CASE_DIR = os.path.join(DATA_DIR, "test_case")
@@ -136,14 +140,12 @@ UPLOAD_DIR = f"{DATA_DIR}{UPLOAD_PREFIX}"
 
 STATICFILES_DIRS = [os.path.join(DATA_DIR, "public")]
 
-
-LOGGING_HANDLERS = ['console', 'sentry'] if production_env else ['console']
 LOGGING = {
    'version': 1,
    'disable_existing_loggers': False,
    'formatters': {
        'standard': {
-           'format': '[%(asctime)s] - [%(levelname)s] - [%(name)s:%(lineno)d]  - %(message)s',
+           'format': '[%(asctime)s] - [%(levelname)s] - [%(name)s:%(lineno)d] - %(message)s',
            'datefmt': '%Y-%m-%d %H:%M:%S'
        }
    },
@@ -152,42 +154,45 @@ LOGGING = {
            'level': 'DEBUG',
            'class': 'logging.StreamHandler',
            'formatter': 'standard'
-       },
-       'sentry': {
-           'level': 'ERROR',
-           'class': 'raven.contrib.django.raven_compat.handlers.SentryHandler',
-           'formatter': 'standard'
        }
    },
-   'loggers': {
+}
+if not production_env:
+    LOGGING['loggers'] = {
        'django.request': {
-           'handlers': LOGGING_HANDLERS,
+           'handlers': ['console'],
            'level': 'ERROR',
            'propagate': True,
        },
        'django.db.backends': {
-           'handlers': LOGGING_HANDLERS,
+           'handlers': ['console'],
            'level': 'ERROR',
            'propagate': True,
        },
         'dramatiq': {
-            'handlers': LOGGING_HANDLERS,
+            'handlers': ['console'],
             'level': 'DEBUG',
             'propagate': False,
         },
        '': {
-           'handlers': LOGGING_HANDLERS,
+           'handlers': ['console'],
            'level': 'WARNING',
            'propagate': True,
        }
-   },
-}
+    }
 
 REST_FRAMEWORK = {
     'TEST_REQUEST_DEFAULT_FORMAT': 'json',
     'DEFAULT_RENDERER_CLASSES': (
         'rest_framework.renderers.JSONRenderer',
+    ),
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'oauth2_provider.contrib.rest_framework.OAuth2Authentication',
     )
+}
+
+OAUTH2_PROVIDER = {
+    'SCOPES': {'account': 'Read your account information'}
 }
 
 REDIS_URL = "redis://%s:%s" % (REDIS_CONF["host"], REDIS_CONF["port"])
@@ -237,10 +242,6 @@ DRAMATIQ_RESULT_BACKEND = {
     "MIDDLEWARE_OPTIONS": {
         "result_ttl": None
     }
-}
-
-RAVEN_CONFIG = {
-    'dsn': 'https://b200023b8aed4d708fb593c5e0a6ad3d:1fddaba168f84fcf97e0d549faaeaff0@sentry.io/263057'
 }
 
 IP_HEADER = "HTTP_X_REAL_IP"
